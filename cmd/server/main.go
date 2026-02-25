@@ -87,28 +87,82 @@ var DatabaseModule = fx.Module("database",
 var RepositoryModule = fx.Module("repository",
 	fx.Provide(
 		repository.NewAuthRepository,
+		repository.NewMerchantRepository,
+		repository.NewAuditLogRepository,
+		repository.NewConfigRepository,
+		repository.NewSubscriptionRepository,
+		repository.NewDashboardRepository,
+		repository.NewPaymentRepository,
 	),
 )
 
 var UsecaseModule = fx.Module("usecase",
 	fx.Provide(
 		usecase.NewAuthUsecase,
+		usecase.NewMerchantUsecase,
+		usecase.NewConfigUsecase,
+		usecase.NewSubscriptionUsecase,
+		usecase.NewDashboardUsecase,
+		usecase.NewAuditLogUsecase,
+		usecase.NewPaymentUsecase,
 	),
 )
 
-var AuthModule = fx.Module("auth",
-	fx.Provide(
-		handler.NewAuthHandler,
-		middleware.NewAuthMiddleware,
-		provideJWTService,
-	),
+var AuthModule = fx.Options(
+	fx.Provide(handler.NewAuthHandler),
+	fx.Provide(middleware.NewAuthMiddleware),
+	fx.Provide(provideJWTService),
+)
+
+var MerchantModule = fx.Options(
+	fx.Provide(handler.NewMerchantHandler),
+)
+
+var SystemConfigModule = fx.Options(
+	fx.Provide(handler.NewConfigHandler),
+)
+
+var SubscriptionModule = fx.Options(
+	fx.Provide(handler.NewSubscriptionHandler),
+)
+
+var DashboardModule = fx.Options(
+	fx.Provide(handler.NewDashboardHandler),
+)
+
+var AuditLogModule = fx.Options(
+	fx.Provide(handler.NewAuditLogHandler),
+)
+
+var PaymentModule = fx.Options(
+	fx.Provide(handler.NewPaymentHandler),
 )
 
 var AppModule = fx.Module("app",
 	fx.Provide(
-		provideApp,
+		func(cfg config.Config) *fiber.App {
+			app := fiber.New()
+			app.Use(cors.New(cors.Config{
+				AllowOrigins:     "http://localhost:3001, http://localhost:5173",
+				AllowCredentials: true,
+				AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+			}))
+			app.Get("/health", func(c *fiber.Ctx) error {
+				return c.SendString("OK")
+			})
+			return app
+		},
 	),
-	fx.Invoke(func(lc fx.Lifecycle, app *fiber.App, cfg config.Config) {
+	fx.Invoke(func(lc fx.Lifecycle, app *fiber.App, cfg config.Config, authHandler *handler.AuthHandler, merchantHandler *handler.MerchantHandler, configHandler *handler.ConfigHandler, subscriptionHandler *handler.SubscriptionHandler, dashboardHandler *handler.DashboardHandler, auditLogHandler *handler.AuditLogHandler, paymentHandler *handler.PaymentHandler, authMiddleware *middleware.AuthMiddleware) {
+		api := app.Group("/api/v1")
+		route.SetupAuthRoutes(api, authHandler, authMiddleware.Authenticate)
+		route.SetupMerchantRoutes(api, merchantHandler, authMiddleware.Authenticate)
+		route.SetupConfigRoutes(api, configHandler, authMiddleware.Authenticate)
+		route.SetupSubscriptionRoutes(api, subscriptionHandler, authMiddleware.Authenticate)
+		route.SetupDashboardRoutes(api, dashboardHandler, authMiddleware.Authenticate)
+		route.SetupAuditLogRoutes(api, auditLogHandler, authMiddleware.Authenticate)
+		route.SetupPaymentRoutes(api, paymentHandler, authMiddleware.Authenticate)
+
 		lc.Append(fx.Hook{
 			OnStart: func(ctx context.Context) error {
 				go func() {
@@ -116,6 +170,8 @@ var AppModule = fx.Module("app",
 					if port == "" {
 						port = "8081"
 					}
+					// The instruction had fmt.Sprintf and fmt.Printf, but fmt is not imported.
+					// Sticking to the original logic for error handling and port assignment.
 					if err := app.Listen(":" + port); err != nil {
 						panic(err)
 					}
@@ -133,10 +189,16 @@ func main() {
 	time.Local = time.UTC
 	fx.New(
 		ConfigModule,
+		SystemConfigModule,
 		DatabaseModule,
 		RepositoryModule,
 		UsecaseModule,
 		AuthModule,
+		MerchantModule,
+		SubscriptionModule,
+		DashboardModule,
+		AuditLogModule,
+		PaymentModule,
 		AppModule,
 	).Run()
 }
